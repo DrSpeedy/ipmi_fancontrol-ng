@@ -1,0 +1,242 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use List::Util qw[min max];
+
+# This script controls IPMI compatible server's fan speeds in response to CPU Temperatures provided by lm-sensors.
+# This script has been tested on a Dell PowerEdge R210 II, but should work on any IPMI compatible server.
+#
+# NOTE: The script puts your server into "Full Fan Speed Mode", and then modifies what "Full Speed" means,
+#       You have to manually use IPMI to set it to e.g. "Optimal" when you're not using the script.
+#
+# NOTE: You use this script at your own risk, and no warranty is provided. Do not use in produciton environments.
+#
+# Maintainer: Brian Wilson <brian@wiltech.org>
+# Original Author: Layla Mah <layla@insightfulvr.com>
+# Original Version: https://github.com/missmah/ipmi_tools
+#
+# What's new?
+#
+# The original script provided a "step" approach where fans would take large "steps" depending on the temps.
+# In this version, scalar equations are generated to provide an easy (and quiet) slope to follow to the next step.
+# These equations are simple Y=mx+b linear slopes that effectivly provide a fan "curve" based on the entries in the
+# %cpu_temp_to_fan_speed hash table.
+#
+# More documentation is planned, however I am available to answer basic configuration questions in the mean time.
+
+# System Configuration
+my $hostname            = `hostname`;
+# Remove line ending from $hostname
+$hostname =~ s/\n//g;
+
+#my $number_of_cpus      = 2; # Number of CPUs to search for
+#my $number_of_gpus      = 4; # Number of GPUs to search for
+my $number_of_fans      = 3; # Number of FANs to search for
+#my $number_of_fanbanks  = 1; # Number of BANKs of FANs to update
+my $min_temp_change     = 0; # *C minimum change to actually cause a fan speed update
+my $seconds_to_sleep    = 5; # Number of seconds to sleep between update loops
+
+# IPMI Configuration
+#my $ipmi_username       = "username_goes_here";
+#my $ipmi_password       = "password_goes_here";
+#my $ipmi_ipaddress      = "ip_address_goes_here";
+my $ipmi_cmd_listall    = "sdr list full";
+my $ipmi_connectmode    = "open";
+#my $ipmi_preamble       = "echo";
+my $ipmi_preamble       = "ipmitool -I $ipmi_connectmode";
+#my $ipmi_preamble       = 'ipmitool -I $ipmi_connectmode -U $ipmi_username -P $ipmi_password -H $ipmi_ipaddress';
+
+# CPU Temp -> Fan Speed Mappings
+my %cpu_temp_to_fan_speed;
+$cpu_temp_to_fan_speed{75} = 0x64;
+$cpu_temp_to_fan_speed{70} = 0x56;
+$cpu_temp_to_fan_speed{60} = 0x48;
+$cpu_temp_to_fan_speed{55} = 0x40;
+$cpu_temp_to_fan_speed{50} = 0x32;
+$cpu_temp_to_fan_speed{40} = 0x25;
+$cpu_temp_to_fan_speed{10} = 0x20;
+
+my %cpu_temp_scale;
+
+# Below this line follows the actual implementation of the script
+
+my $g_current_fan_duty_cycle = 0;
+my $g_current_gpu_temp = 0;
+my $g_current_cpu_temp = 0;
+my $g_last_set_cpu_temp = 0;
+my $g_last_set_gpu_temp = 0;
+
+sub Internal_DoSetFanSpeed
+{
+    my ( $fan_speed ) = @_;
+
+    `$ipmi_preamble raw 0x30 0x30 0x02 0xff $fan_speed> /dev/null 2>&1`;
+    #my ( $fan_speed ) = @_;
+    #
+    #foreach my $fanbank (0..$number_of_fanbanks)
+    #{
+    #  my $hex_fanbank = sprintf( "0x%x", $fanbank );
+    #  my $result = `$ipmi_preamble raw 0x30 0x70 0x66 0x01 $hex_fanbank $fan_speed`;
+    #  print "===============================\n";
+    #  print "Test: $result\n";
+    #  print "===============================\n";
+    #}
+}
+
+sub SetFanSpeed
+{
+    my ( $fan_speed ) = @_;
+
+    my $cpu_temp_difference = $g_current_cpu_temp - $g_last_set_cpu_temp;
+    my $gpu_temp_difference = $g_current_gpu_temp - $g_last_set_gpu_temp;
+    if( ( (abs $cpu_temp_difference) > $min_temp_change ) or ( (abs $gpu_temp_difference) > $min_temp_change ) )
+    {
+        # Set all 4 fan banks to operate at $fan_speed duty cycle (0x0-0x64 valid range)
+        print "\n";
+        print "******************** Updating Fan Speeds ********************\n";
+        print "We last updated fan speed $cpu_temp_difference *C ago (CPU Temperature).\n";
+        print "We last updated fan speed $gpu_temp_difference *C ago (GPU Temperature).\n";
+        print "Current CPU Temperature is $g_current_cpu_temp *C.\n";
+        print "Current GPU Temperature is $g_current_gpu_temp *C.\n";
+        print "Setting Fan Speed on all fan banks to $fan_speed\n";
+        print "*************************************************************\n";
+
+        $g_last_set_cpu_temp = $g_current_cpu_temp;
+        $g_last_set_gpu_temp = $g_current_gpu_temp;
+        $g_current_fan_duty_cycle = $fan_speed;
+
+        Internal_DoSetFanSpeed( $fan_speed );
+    }
+}
+
+# Get current CPU temperature from lmsensors. If there are multiple CPU's,
+# the script will automatically choose the highest temperature.
+sub GetCPUTemp
+{
+    my $current_cpu_temp = 0;
+
+    my $sensors_output = `sensors | grep "Package" | sed 's/.*:\\s*+\\(.*\\)  .*(.*/\\1/'`;
+    my @vals = split("\n", $sensors_output);
+    foreach my $value (@vals)
+    {
+        # Remove the *C from $sensors_output (and anything else thats not numbers or decimal points)
+        my $cpu_temp = `echo $value | sed -e 's/[^0-9. ]*//g' -e 's/ \\+/ /g'`;
+        $current_cpu_temp = max($cpu_temp, $current_cpu_temp);
+    }
+    # Remove trailing line endings
+    $current_cpu_temp =~ s/\n//g;
+
+    return $current_cpu_temp;
+}
+
+# Extracted from the UpdateFanSpeed() method in the original script
+# This will return an array of the min and max fan speeds out of all fans
+# determined by the $number_of_fans variable at the top. Determins min and max
+# much the same way as the CPU method.
+sub GetFanRPM
+{
+    my $min_fan_speed = 30000;
+    my $max_fan_speed = 0;
+
+    my $ipmi_output = `$ipmi_preamble $ipmi_cmd_listall`;
+    my @vals = split("\n", $ipmi_output);
+
+    foreach my $value (@vals)
+    {
+        foreach my $fan (1..$number_of_fans)
+        {
+            if ($value =~ /^(FAN $fan)\s.*\s(\d+)\s.*RPM.*/gi)
+            {
+                #print "Value   : $value\n";
+                #print "Matched : $1\n";
+                #print "FanSpeed: $2 RPM\n";
+                print "$1 ....: $2 RPM\n";
+                my $fan_speed = $2;
+                $min_fan_speed = min($fan_speed, $min_fan_speed);
+                $max_fan_speed = max($fan_speed, $max_fan_speed);
+            }
+        }
+    }
+    return ($min_fan_speed, $max_fan_speed);
+}
+
+
+sub CalculateScalars
+{
+    my @previous = ();
+    foreach my $a (sort keys %cpu_temp_to_fan_speed){
+        my @current = ($a, $cpu_temp_to_fan_speed{$a});
+
+        if (@previous) {
+            my $m = ($current[1] - $previous[1]) / ($current[0] - $previous[0]);
+            my $b = $current[1] - ($m*$current[0]);
+
+            $cpu_temp_scale{$a} = [($m, $b)];
+        }
+
+        @previous = @current;
+    }
+}
+
+sub UpdateFanSpeed
+{ 
+    my $current_cpu_temp = GetCPUTemp();
+    my $current_gpu_temp = 0;
+
+    my @rpm_array = GetFanRPM();
+    my $min_fan_speed = $rpm_array[0];
+    my $max_fan_speed = $rpm_array[1];
+
+    $g_current_cpu_temp = $current_cpu_temp;
+    $g_current_gpu_temp = $current_gpu_temp;
+
+    print "Maximum CPU Temperature Seen: $current_cpu_temp degrees C.\n";
+    print "Maximum GPU Temperature Seen: $current_gpu_temp degrees C.\n";
+    print "Current Minimum Fan Speed: $min_fan_speed RPM\n";
+    print "Current Maximum Fan Speed: $max_fan_speed RPM\n";
+
+    my $desired_fan_speed = 0;
+    my $calculated_speed = 0;
+    foreach my $a (reverse sort keys %cpu_temp_scale) {
+        #print "A$a\n";
+        if ($current_cpu_temp <= $a) {
+            my @formula = @{$cpu_temp_scale{$a}};
+            $calculated_speed = ($formula[0] * $current_cpu_temp) + $formula[1];
+            #print "Test#2:$formula[0] $formula[1]\n";
+            $desired_fan_speed = sprintf("%.0f", $calculated_speed);
+        }
+    }
+
+    print "Current Fan Duty Cycle: $g_current_fan_duty_cycle%\n";
+    print "Desired Fan Duty Cycle: $desired_fan_speed%\n";
+
+
+    # Output basic InfluxDB metrics to /tmp/fan_speed_telegraf
+    my $speed_raw = sprintf("%x", $calculated_speed);
+    open(FH, '>', '/tmp/fan_speed_telegraf') or die $!;
+    print FH "fans,host=$hostname speed_percent=$calculated_speed\n";
+    print FH "fans,host=$hostname speed_raw=$speed_raw\n";
+    close(FH);
+    
+    SetFanSpeed($desired_fan_speed);
+}
+
+print "Setting Fan mode to FULL SPEED.\n";
+# Ensure Fan Mode is set to Full Speed
+`$ipmi_preamble raw 0x30 0x30 0x01 0x00`;
+CalculateScalars();
+
+while( 1 )
+{
+    print "\n";
+    print "=================================================================\n";
+    print "Calling UpdateFanSpeed()...\n";
+    print "=================================================================\n";
+    UpdateFanSpeed();
+    print "=================================================================\n";
+    print "Update Complete - going to sleep for $seconds_to_sleep seconds...\n";
+    print "=================================================================\n";
+
+
+    sleep $seconds_to_sleep;
+}

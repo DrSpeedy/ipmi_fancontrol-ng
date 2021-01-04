@@ -1,0 +1,19 @@
+[Unit] 
+Description=IPMI Fan Control Daemon 
+#After=network.target
+
+[Service]
+# Change and/or create the required user and group.
+User=root
+Group=root
+# The UMask parameter controls the permissions of folders and files created. 
+#UMask=002
+ExecStart=/usr/bin/ipmi_fancontrol-ng 
+Type=simple
+TimeoutStopSec=20
+KillMode=process 
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
