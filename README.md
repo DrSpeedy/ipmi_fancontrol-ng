@@ -1,14 +1,14 @@
-#IPMI Fan Control Daemon
+# IPMI Fan Control Daemon
 
 ----
 This script controls IPMI compatible server's fan speeds in response to CPU Temperatures provided by lm-sensors.
 This script has been tested on a Dell PowerEdge R210 II, but should work on any IPMI compatible server.
 
-#####NOTE: 
+##### NOTE: 
 The script puts your server into "Full Fan Speed Mode", and then modifies what "Full Speed" means,
 You have to manually use IPMI to set it to e.g. "Optimal" when you're not using the script.
 
-#####NOTE: 
+##### NOTE: 
 You use this script at your own risk, and no warranty is provided. Do not use in produciton environments.
 
 * Maintainer: Brian Wilson <brian@wiltech.org>
