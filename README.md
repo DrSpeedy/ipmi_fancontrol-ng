@@ -24,6 +24,9 @@ These equations are simple Y=mx+b linear slopes that effectivly provide a fan "c
 
 ### Installation and Usage
 ```sh
+# Install dependencies (Debian, your pkg names may be different)
+apt install lm-sensors ipmitool
+
 # Verify IPMI modules are loaded
 lsmod | grep -i ipmi
 
