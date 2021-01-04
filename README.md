@@ -33,6 +33,7 @@ lsmod | grep -i ipmi
 # Install
 cp ipmi_fancontrol-ng /usr/bin/
 cp ipmi_fancontrol-ng.service /usr/lib/systemd/system/
+chmod +x /usr/bin/ipmi_fancontrol-ng
 
 # Enable on boot and start
 systemctl enable ipmi_fancontrol-ng
