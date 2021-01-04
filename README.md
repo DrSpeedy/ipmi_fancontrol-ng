@@ -1,7 +1,9 @@
 # IPMI Fan Control Daemon
 
 This script controls IPMI compatible server's fan speeds in response to CPU Temperatures provided by lm-sensors.
-This script has been tested on a Dell PowerEdge R210 II, but should work on any IPMI compatible server.
+This script has been tested on a Dell PowerEdge R210 II in a homelab environment, but should work on any IPMI compatible server.
+
+![](what_to_expect.PNG)
 
 #### NOTE: 
 The script puts your server into "Full Fan Speed Mode", and then modifies what "Full Speed" means,
@@ -45,7 +47,10 @@ Metrics are output to the file `/tmp/fan_speed_telegraf` by default and can be i
   timeout = "5s"
   data_format = "influx"
 ```
+#### Metrics Available
+* Fan Speed %
+* Fan Speed HEX
 
-
+---
 More documentation is planned, however I am available to answer basic configuration questions in the mean time.
 
