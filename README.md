@@ -38,7 +38,7 @@ chmod +x /usr/bin/ipmi_fancontrol-ng
 
 # Enable on boot and start
 systemctl enable ipmi_fancontrol-ng
-systemctl start ipmi_fancontrol
+systemctl start ipmi_fancontrol-ng
 ```
 
 ### InfluxDB & Telegraf
